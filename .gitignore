@@ -35,3 +35,11 @@ Thumbs.db
 # Local agent notes
 AGENTS.md
 docs/
+
+# Local review and browser artifacts
+.playwright-mcp/
+/conversation.md
+/plan-review.txt
+/pr-description.md
+allure-results/
+allure-report/
