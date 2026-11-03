@@ -1,0 +1,29 @@
+# Loaded only with the trusted rfr project configuration layer.
+# Prefix matching does not constrain cwd, trailing arguments or script contents.
+root = "C:/Users/lazva/CodexProject/rfr"
+tasks = ["runAll", ":rfr-auth:bootRun", ":rfr-api:bootRun", "e2e", ":rfr-e2e:test"]
+actions = ["up", "start", "stop", "down", "ps"]
+gradle = [root + "/gradlew.bat", "--project-dir", root]
+compose = ["docker", "compose", "--project-directory", root, "--file", root + "/compose.yaml", "--project-name", "rfr"]
+
+prefix_rule(pattern = gradle + [tasks], decision = "allow")
+prefix_rule(pattern = [["./gradlew", ".\\gradlew.bat", "./gradlew.bat", root + "/gradlew.bat"], tasks], decision = "allow")
+prefix_rule(pattern = compose + [actions], decision = "allow")
+prefix_rule(pattern = ["docker", "compose", actions], decision = "allow")
+prefix_rule(pattern = [["npm", "npm.cmd"], "run", "dev"], decision = "allow")
+prefix_rule(pattern = [["npm", "npm.cmd"], "--prefix", ["rfr-gql-client", root + "/rfr-gql-client"], "run", "dev"], decision = "allow")
+prefix_rule(pattern = ["bash", ["ports.sh", "./ports.sh", root + "/ports.sh"]], decision = "allow")
+prefix_rule(pattern = [["powershell.exe", "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"], "-NoProfile", "-NonInteractive", "-File", root + "/.codex/scripts/backup.ps1"], decision = "allow", justification = "The project backup script validates paths and refuses to overwrite backups")
+
+# No suffix matching: never grant unrestricted mv access to approximate *.bak.
+prefix_rule(pattern = [["mv", "mv.exe", "Move-Item", "move-item"]], decision = "prompt", justification = "Confirm that the destination is a .bak backup within the project")
+prefix_rule(pattern = ["docker", "stop", "rfr-mysql"], decision = "prompt")
+prefix_rule(pattern = [["Stop-Process", "stop-process", "kill", "spps", "taskkill", "taskkill.exe"]], decision = "prompt")
+prefix_rule(pattern = gradle + ["--stop"], decision = "prompt")
+
+prefix_rule(pattern = [["git", "git.exe"], "push"], decision = "forbidden", justification = "Git push is forbidden in this project")
+prefix_rule(pattern = [["git", "git.exe"], "-C", root, "push"], decision = "forbidden", justification = "Git push is forbidden in this project")
+prefix_rule(pattern = [["rm", "rm.exe"]], decision = "forbidden", justification = "Preserve files by renaming them to .<name>.<timestamp>.bak instead")
+prefix_rule(pattern = [["git", "git.exe"], "-C", ".", "push"], decision = "forbidden", justification = "Git push is forbidden in this project")
+prefix_rule(pattern = [["git", "git.exe"], "rm"], decision = "forbidden", justification = "Use the project backup script to preserve files instead")
+prefix_rule(pattern = [["unlink", "unlink.exe"]], decision = "forbidden", justification = "Use the project backup script to preserve files instead")

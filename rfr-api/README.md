@@ -72,6 +72,12 @@ rfr-api/
 Таблицы `photo`, `like`, `photo_like`, `statistic` уже есть в миграции, но приложение их не использует -
 реализация фото, лайков и статистики - задача дипломного проекта.
 
+`withFriends` выбирает JSON-файл, а не друзей из БД. Лайк изменяет только объект текущего ответа;
+следующее чтение снова загружает JSON. Успешный snackbar на фронтенде вызывается обработчиком `onCompleted`
+и не проверяет запись в БД. Ответ мутации также может обновить кеш Apollo: уведомление и изменение карточки
+не доказывают сохранение. Проверяйте результат независимым чтением с сервера без клиентского кеша,
+учитывая фильтры и пагинацию. Для моковых фото отсутствие сохранения — текущее ограничение реализации.
+
 ## GraphQL API
 
 Схема: `src/main/resources/graphql/query.graphqls`. Endpoint: `POST http://localhost:8081/graphql`.
@@ -182,7 +188,8 @@ mutation CreatePhoto($input: PhotoInput!) {
 
 ## Ошибки
 
-HTTP-статус GraphQL-ответа - 200 и при ошибке; проверяйте `errors`. `GraphQlExceptionResolver` переводит исключения:
+Ошибки выполнения GraphQL приходят в `errors`, обычно с HTTP 200. Невалидный Bearer-токен отклоняется
+фильтрами с HTTP 401 до GraphQL. `GraphQlExceptionResolver` переводит исключения:
 
 | Исключение | `extensions.classification` | Пример `message` |
 |---|---|---|
@@ -202,7 +209,7 @@ HTTP-статус GraphQL-ответа - 200 и при ошибке; прове�
   в `RangifflerApiConfiguration`).
 - Username текущего пользователя - claim `sub` (`@AuthenticationPrincipal Jwt`).
 - Невалидный или просроченный Bearer-токен - HTTP 401 от фильтра, до GraphQL.
-- GraphiQL (`/graphiql`) включен, но `GET` на него требует аутентификации - см. раздел Security config в корневом README.
+- GraphiQL (`/graphiql`) включен, но `GET` на него требует аутентификации — см. [Security config](../README.md#security-config).
 
 ## База данных
 
@@ -224,13 +231,15 @@ UUID пользователя в `rangiffler-api` и `rangiffler-auth` неза�
 
 ```bash
 # из корня проекта: MySQL в Docker
-# внимание: localenv.sh останавливает и удаляет ВСЕ docker-контейнеры на машине
+# localenv.sh запускает только MySQL через Compose и ждёт его готовности
 bash localenv.sh
 
 cd rfr-api
 ../gradlew bootRun
 # или main class io.student.rangiffler.RangifflerApiApplication из IDE
 ```
+
+Для PowerShell и совместного запуска auth/API см. [корневой README](../README.md#с-чего-начать).
 
 Проверка (access token можно взять в localStorage фронтенда после логина, ключ `access_token`):
 

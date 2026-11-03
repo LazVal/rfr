@@ -1,0 +1,20 @@
+{
+  "description": "Compile changed Java modules and lint/build the frontend after Codex patches, without running tests.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/compile.mjs\"",
+            "commandWindows": "node \"C:/Users/lazva/CodexProject/rfr/.codex/hooks/compile.mjs\"",
+            "timeout": 300,
+            "statusMessage": "Compiling changed Java modules and checking frontend",
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -6,7 +6,7 @@
 С бэкендом общается через GraphQL (`rfr-api`), аутентифицируется в `rfr-auth` по OAuth 2.1 Authorization Code + PKCE.
 
 Лента, фото и лайки на бэкенде пока mock: интерфейс показывает успешные операции, но после перечитывания ленты
-данные возвращаются к содержимому JSON (подробнее - README `rfr-api`).
+данные возвращаются к содержимому JSON (подробнее — [README API](../rfr-api/README.md#что-реализовано-а-что-mock)).
 
 ## Технологический стек
 
@@ -40,7 +40,7 @@ rfr-gql-client/src/
 │   ├── PhotoContainer/     # Сетка фото, скелетоны, бесконечная прокрутка, пустые состояния
 │   ├── PhotoCard/          # Карточка: фото 4:3, страна, лайк, меню владельца (Edit / Delete)
 │   ├── AddPhotoFab/        # Плавающая кнопка "Add photo"
-│   ├── PhotoModal/         # Только formValidate.ts - начальное состояние и валидация формы фото
+│   ├── PhotoModal/         # formValidate.ts и компонент PhotoModal; активный диалог находится в DialogContext
 │   ├── ImageUpload/, CountrySelect/
 │   ├── ProfileForm/        # Форма профиля
 │   ├── PeopleTable/        # All / Friends / Income / Outcome, карточки на узких экранах
@@ -83,7 +83,7 @@ rfr-gql-client/src/
 6. Logout (`MenuAppBar`): `POST /oauth2/revoke` для access token -> очистка Apollo store ->
    `/connect/logout?id_token_hint=<id_token>&post_logout_redirect_uri=.../logout` -> `/logout` очищает localStorage.
 
-Access token живет 10 минут, refresh token публичному клиенту не выдается: после истечения пользователь входит заново
+Access token живет 30 минут, refresh token публичному клиенту не выдается: после истечения пользователь входит заново
 (пока жива сессия `rfr-auth`, без ввода пароля).
 
 ### localStorage
@@ -121,6 +121,8 @@ Access token живет 10 минут, refresh token публичному кли
 
 Кэш Apollo нормализует сущности по `id`, `Feed` сливается (`merge: true`). Ответ мутации сразу обновляет карточку,
 поэтому успешный snackbar или обновленная карточка не доказывают сохранение - для проверки нужно независимое чтение.
+Уведомление вызывается из обработчика `onCompleted`, который не проверяет запись в БД. Для проверки сохранения
+нужно перечитать данные с сервера без клиентского кеша и сравнить их с ожидаемым результатом.
 
 ## Конфигурация
 
@@ -137,6 +139,9 @@ VITE_CLIENT_ID=client
 Dev-сервер слушает `VITE_FRONT_HOST:3001` (`vite.config.ts`). Порт должен совпадать с redirect URI клиента в `rfr-auth`.
 
 ## Запуск
+
+Для полного набора команд, включая ESLint, используй Node.js 22.13+ в ветке 22.x либо 24+.
+Порядок запуска MySQL и серверов — в [корневом README](../README.md#с-чего-начать).
 
 ```bash
 cd rfr-gql-client

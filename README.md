@@ -33,10 +33,10 @@ rfr/
 ├── rfr-auth/              # OAuth 2.0 Authorization Server (готов)
 ├── rfr-api/               # GraphQL API Backend (базовая реализация)
 │   ├── Mock контроллеры для фотографий
-│   ├── Реальные контроллеры для пользователей и стран
+│   ├── Реальные контроллеры для пользователей, стран и дружбы
 │   └── Flyway миграции БД
 ├── rfr-gql-client/        # React + TypeScript Frontend (готов)
-└── rfr-e2e/               # E2E тесты: JUnit 6 + Playwright + Allure 3 (заготовка)
+└── rfr-e2e/               # Тесты регистрации, входа, профиля; JUnit 6 + Playwright + Allure 3
 ```
 
 **Порты:**
@@ -53,6 +53,12 @@ rfr/
 - E2E: JUnit 6, Playwright Java 1.63, Allure 3
 
 # С чего начать?
+
+Нужны JDK 25, Docker с Compose и Node.js 22.13+ в ветке 22.x либо 24+.
+Нижняя граница Node учитывает Vite и ESLint из `package-lock.json`.
+Команды ниже выполняются из корня проекта, если явно не указан переход в модуль.
+Описание модулей: [auth](rfr-auth/README.md), [API](rfr-api/README.md),
+[фронтенд](rfr-gql-client/README.md), [E2E](rfr-e2e/README.md).
 
 Мы подготовили для тебя полностью рабочий frontend, минимально работающий сервис auth, а также базовую реализацию rfr-api с mock контроллерами.
 Так как данный проект использует GraphQL, а frontend уже написан под конкретный API, то в проекте есть файл
@@ -80,44 +86,66 @@ Mock контроллеры возвращают статические данн
 bash localenv.sh
 ```
 
-Скрипт запустит MySQL в Docker контейнере.
+Скрипт выполняет `docker compose up -d mysql --wait`: запускает только MySQL из `compose.yaml`
+и ждёт готовности по healthcheck. Другие контейнеры не останавливает и не удаляет.
+MySQL слушает порт 3306, пользователь `root`, пароль `secret`; данные сохраняются в Docker volume.
+В PowerShell без Bash используй:
 
-#### 2. Запусти rfr-auth:
-
-```bash
-cd rfr-auth
-../gradlew bootRun
+```powershell
+docker compose up -d mysql --wait
 ```
 
-Или запусти класс с методом main руками. Auth будет доступен на порту 9001: http://localhost:9001
-
-#### 3. Запусти rfr-api:
+#### 2. Запусти rfr-auth и rfr-api:
 
 ```bash
-cd rfr-api
-../gradlew bootRun
+./gradlew runAll
 ```
 
-rfr-api стартанет на порту 8081: http://localhost:8081/graphql
+В PowerShell:
 
-GraphiQL интерфейс доступен по адресу: http://localhost:8081/graphiql
+```powershell
+.\gradlew.bat runAll
+```
 
-#### 4. Обнови зависимости и запускай фронт:
+Задача параллельно запускает оба приложения; MySQL и фронтенд в неё не входят.
+Дождись запуска обоих: auth — http://localhost:9001, API — http://localhost:8081/graphql.
+Схемы `rangiffler-auth` и `rangiffler-api` создаются при подключении, миграции выполняет Flyway.
+Терминал оставь работающим. Раздельный запуск описан в README модулей.
+
+GraphiQL включён на `/graphiql`, но текущие правила безопасности требуют аутентификацию для GET этой страницы.
+Простое открытие URL без токена не даёт доступ к интерфейсу.
+
+#### 3. В другом терминале установи зависимости и запусти фронтенд:
 
 ```bash
 cd rfr-gql-client
-npm i
+npm ci
 npm run dev
 ```
 
-Фронт стартанет в твоем браузере на порту 3001: http://localhost:3001/
+Открой фронтенд на http://localhost:3001/. `npm ci` нужен при первом запуске и после изменения зависимостей.
 
-#### 5. Проверь работоспособность
+#### 4. Проверь работоспособность
 
 Кнопка "Login" работает через сервис auth. После успешной авторизации ты попадешь на главную страницу Rangiffler.
 
 Mock контроллеры в rfr-api будут возвращать статические данные из JSON файлов для ленты фотографий.
-Реальная работа с пользователями и странами уже реализована через базу данных.
+Реальная работа с пользователями, странами и дружбой уже реализована через базу данных.
+Успешный snackbar или изменение карточки через кеш Apollo не подтверждают сохранение: нужно повторное
+чтение с сервера без клиентского кеша. Мутации фото и лайков ничего не сохраняют; `deletePhoto` возвращает `true`
+без удаления. Подробнее — [реальные функции и моки](rfr-api/README.md#что-реализовано-а-что-mock).
+
+#### 5. Запусти E2E из корня проекта в новом терминале
+
+```powershell
+.\gradlew.bat e2e
+```
+
+В Bash: `./gradlew e2e`. Тесты модуля выполняются при каждом вызове, браузер работает без окна.
+При первом UI-прогоне Playwright Java сам устанавливает отсутствующие браузеры своей версии; нужен доступ к сети.
+Для CI доступна задача `./gradlew :rfr-e2e:installPlaywright`: она устанавливает Chromium и системные зависимости.
+Условия автоматической загрузки, вариант с установленным Chrome, выбор тестов
+и Allure-отчёт описаны в [README E2E](rfr-e2e/README.md#браузеры-при-первом-запуске).
 
 
 # Что дальше?
@@ -481,14 +509,15 @@ message UsersResponse {
 (`JwtAuthenticationConverter` в `RangifflerApiConfiguration`). `id_token` предназначен фронтенду (`aud` = client_id),
 поэтому API его отвергает с 401. Фронтенд использует `id_token` только как `id_token_hint` при logout.
 
-   Access token живет 10 минут. При logout фронтенд отзывает его через `POST /oauth2/revoke` (RFC 7009, публичный клиент
+   Access token живет 30 минут. При logout фронтенд отзывает его через `POST /oauth2/revoke` (RFC 7009, публичный клиент
 идентифицируется по `client_id`), а затем вызывает OIDC logout. Учтите: access token - самодостаточный JWT, `rfr-api`
 проверяет его локально по подписи и не знает об отзыве, поэтому отозванный токен продолжает приниматься API до `exp`.
 Отзыв делает недействительной авторизацию на стороне `rfr-auth`; мгновенный отказ API потребовал бы opaque-токенов
 и introspection.
 
-   Для локального тестирования вы можете открыть страницу
-GraphiQL (`spring.graphql.graphiql.enabled: true` уже включен в `application.yml`):
+   GraphiQL включён (`spring.graphql.graphiql.enabled: true` в `application.yml`), но текущий
+`SecurityFilterChain` требует аутентификацию для GET `/graphiql`. Следующий пример показывает возможное
+разрешение доступа к странице, а не действующую конфигурацию проекта:
 ```java
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -555,7 +584,8 @@ GraphiQL (`spring.graphql.graphiql.enabled: true` уже включен в `appl
 
 ###### Ошибки GraphQL
 
-  GraphQL отвечает HTTP 200 даже при ошибке - ошибка приходит в массиве `errors` ответа. Чтобы фронт мог показать пользователю
+  Ошибки выполнения GraphQL приходят в массиве `errors` ответа, обычно с HTTP 200. Невалидный Bearer-токен
+отклоняется фильтрами с HTTP 401 до выполнения GraphQL. Чтобы фронт мог показать пользователю
 понятный текст, а внутренние детали не утекали наружу, исключения классифицирует `GraphQlExceptionResolver`:
 
 | Исключение | `extensions.classification` |

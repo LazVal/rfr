@@ -46,10 +46,20 @@ allure {
     }
 }
 
+tasks.register('installPlaywright', JavaExec) {
+    group = 'verification'
+    description = 'Installs Chromium and its system dependencies for E2E'
+    classpath = configurations.testRuntimeClasspath
+    mainClass = 'com.microsoft.playwright.CLI'
+    args 'install', '--with-deps', 'chromium'
+}
+
 test {
+    outputs.upToDateWhen { false }
     useJUnitPlatform()
     // These scenarios are executed explicitly by EngineTestKit, including an intentional failure.
     exclude '**/UserExtensionTest$*.class'
     systemProperties System.getProperties().findAll { key, value -> key.toString().startsWith('rfr.') }
+    systemProperty 'allure.results.directory', layout.buildDirectory.dir('allure-results').get().asFile.absolutePath
     jvmArgumentProviders.add({ ["-javaagent:${configurations.agent.singleFile}"] } as CommandLineArgumentProvider)
 }
