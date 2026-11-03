@@ -1,0 +1,269 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    name: Detect changed modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      shared: ${{ steps.filter.outputs.shared }}
+      auth: ${{ steps.filter.outputs.auth }}
+      api: ${{ steps.filter.outputs.api }}
+      e2e: ${{ steps.filter.outputs.e2e }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      workflow: ${{ steps.filter.outputs.workflow }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared:
+              - 'build.gradle'
+              - 'settings.gradle'
+              - 'gradle.properties'
+              - 'gradle/**'
+              - 'gradlew'
+              - 'gradlew.bat'
+            auth:
+              - 'rfr-auth/**'
+            api:
+              - 'rfr-api/**'
+            e2e:
+              - 'rfr-e2e/**'
+            frontend:
+              - 'rfr-gql-client/**'
+            workflow:
+              - '.github/workflows/ci.yml'
+
+  backend:
+    name: Build changed backends and compile E2E
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.auth == 'true' || needs.changes.outputs.api == 'true' || needs.changes.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v5
+      - env:
+          WORKFLOW: ${{ needs.changes.outputs.workflow }}
+          SHARED: ${{ needs.changes.outputs.shared }}
+          AUTH: ${{ needs.changes.outputs.auth }}
+          API: ${{ needs.changes.outputs.api }}
+          E2E: ${{ needs.changes.outputs.e2e }}
+        run: |
+          tasks=()
+          [[ $WORKFLOW == true ]] && SHARED=true
+          [[ $SHARED == true || $AUTH == true ]] && tasks+=(:rfr-auth:build)
+          [[ $SHARED == true || $API == true ]] && tasks+=(:rfr-api:build)
+          [[ $SHARED == true || $E2E == true ]] && tasks+=(:rfr-e2e:testClasses)
+          ./gradlew "${tasks[@]}"
+
+  frontend:
+    name: Lint and build frontend
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: rfr-gql-client
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: rfr-gql-client/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  e2e:
+    name: Run E2E
+    needs: changes
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.workflow == 'true' ||
+       needs.changes.outputs.shared == 'true' ||
+       needs.changes.outputs.auth == 'true' ||
+       needs.changes.outputs.api == 'true' ||
+       needs.changes.outputs.e2e == 'true' ||
+       needs.changes.outputs.frontend == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      RFR_BASE_URL: http://localhost:3001
+      RFR_AUTH_URL: http://localhost:9001
+    services:
+      mysql:
+        image: mysql:8.4.7
+        ports:
+          - 3306:3306
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -psecret"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+          --health-start-period 30s
+    steps:
+      - name: Record job steps start
+        id: clock
+        run: |
+          mkdir -p "$RUNNER_TEMP/rfr-e2e"
+          echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: rfr-gql-client/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: rfr-gql-client
+        run: npm ci
+      - name: Install Chromium and system dependencies
+        run: ./gradlew :rfr-e2e:installPlaywright
+      - name: Start backends
+        id: stand
+        run: |
+          echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+          nohup ./gradlew runAll --console=plain --project-cache-dir "$RUNNER_TEMP/rfr-gradle-services" \
+            > "$RUNNER_TEMP/rfr-e2e/backend.log" 2>&1 < /dev/null &
+      - name: Start frontend
+        working-directory: rfr-gql-client
+        run: |
+          nohup npm run dev -- --host localhost --strictPort \
+            > "$RUNNER_TEMP/rfr-e2e/frontend.log" 2>&1 < /dev/null &
+      - name: Wait for ports 9001, 8081 and 3001
+        id: ready
+        timeout-minutes: 4
+        run: |
+          node --input-type=module <<'NODE'
+          import net from 'node:net'
+          import {setTimeout} from 'node:timers/promises'
+          const deadline = Date.now() + 180_000
+          const pending = new Set([9001, 8081, 3001])
+          function available(port) {
+            return new Promise(resolve => {
+              const socket = net.createConnection({host: 'localhost', port})
+              const finish = ready => {
+                socket.destroy()
+                resolve(ready)
+              }
+              socket.setTimeout(1000, () => finish(false))
+              socket.once('error', () => finish(false))
+              socket.once('connect', () => finish(true))
+            })
+          }
+          while (pending.size > 0) {
+            await Promise.all([...pending].map(async port => {
+              if (await available(port)) {
+                pending.delete(port)
+                console.log(`Port ${port} is ready`)
+              }
+            }))
+            if (pending.size > 0) {
+              if (Date.now() >= deadline) {
+                throw new Error(`Services did not open ports within 180 seconds: ${[...pending].join(', ')}`)
+              }
+              await setTimeout(500)
+            }
+          }
+          NODE
+          echo "finished=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - name: Run E2E tests
+        id: tests
+        timeout-minutes: 10
+        run: |
+          echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+          trap 'echo "finished=$(date +%s)" >> "$GITHUB_OUTPUT"' EXIT
+          ./gradlew e2e 2>&1 | tee "$RUNNER_TEMP/rfr-e2e/tests.log"
+      - name: Print service logs on failure
+        if: failure()
+        run: |
+          for file in "$RUNNER_TEMP/rfr-e2e/backend.log" "$RUNNER_TEMP/rfr-e2e/frontend.log"; do
+            if [[ -f "$file" ]]; then
+              echo "::group::$(basename "$file")"
+              cat "$file"
+              echo "::endgroup::"
+            fi
+          done
+      - name: Summarize timings
+        if: always()
+        env:
+          JOB_STARTED: ${{ steps.clock.outputs.started }}
+          STAND_STARTED: ${{ steps.stand.outputs.started }}
+          STAND_READY: ${{ steps.ready.outputs.finished }}
+          TESTS_STARTED: ${{ steps.tests.outputs.started }}
+          TESTS_FINISHED: ${{ steps.tests.outputs.finished }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {appendFileSync, mkdirSync, writeFileSync} from 'node:fs'
+          import {join} from 'node:path'
+          const timestamp = name => Number(process.env[name]) || undefined
+          const duration = (start, end) => start && end ? end - start : null
+          const elapsed = duration(timestamp('JOB_STARTED'), Math.floor(Date.now() / 1000))
+          const startup = duration(timestamp('STAND_STARTED'), timestamp('STAND_READY'))
+          const preparation = duration(timestamp('JOB_STARTED'), timestamp('STAND_READY'))
+          const tests = duration(timestamp('TESTS_STARTED'), timestamp('TESTS_FINISHED'))
+          const share = elapsed > 0 && startup !== null ? Number((100 * startup / elapsed).toFixed(1)) : null
+          const metrics = {measuredStepsSeconds: elapsed, untilReadySeconds: preparation, serviceStartupSeconds: startup, testsSeconds: tests, startupShareOfMeasuredStepsPercent: share}
+          const directory = join(process.env.RUNNER_TEMP, 'rfr-e2e')
+          mkdirSync(directory, {recursive: true})
+          writeFileSync(join(directory, 'timings.json'), JSON.stringify(metrics, null, 2) + '\n')
+          const display = (value, unit) => value === null ? 'Not completed' : `${value}${unit}`
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+            '## E2E timings',
+            '',
+            '| Phase | Duration |',
+            '|---|---|',
+            `| Preparation until stand ready | ${display(preparation, ' s')} |`,
+            `| Service startup (included in preparation) | ${display(startup, ' s')} |`,
+            `| E2E tests (Gradle invocation) | ${display(tests, ' s')} |`,
+            `| Measured job steps so far | ${display(elapsed, ' s')} |`,
+            `| Startup share of measured job steps | ${display(share, '%')} |`,
+            '',
+            'Measured steps exclude runner/MySQL initialization, artifact uploads and action post steps. Use the Actions job duration for the full elapsed time.',
+            '',
+          ].join('\n'))
+          NODE
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-allure-results
+          path: rfr-e2e/build/allure-results
+          if-no-files-found: warn
+      - name: Upload E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-diagnostics
+          path: |
+            ${{ runner.temp }}/rfr-e2e
+            rfr-e2e/build/reports/tests/test
+            rfr-e2e/build/test-results/test
+          if-no-files-found: warn

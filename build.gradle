@@ -42,3 +42,15 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.compilerArgs.add('-parameters')
 }
+
+tasks.register('runAll') {
+    group = 'application'
+    description = 'Runs rfr-auth and rfr-api in parallel'
+    dependsOn ':rfr-auth:bootRun', ':rfr-api:bootRun'
+}
+
+tasks.register('e2e') {
+    group = 'verification'
+    description = 'Runs all tests in rfr-e2e'
+    dependsOn ':rfr-e2e:test'
+}
